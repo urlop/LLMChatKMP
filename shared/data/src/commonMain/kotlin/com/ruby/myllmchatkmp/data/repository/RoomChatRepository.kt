@@ -11,6 +11,7 @@ import com.ruby.myllmchatkmp.domain.repository.ReplySource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
@@ -113,7 +114,10 @@ class RoomChatRepository(
         }
 
     override suspend fun stopStreaming(conversationId: String) {
-        streamingJobs.remove(conversationId)?.cancel()
+        // Wait for the cancellation to actually land (including streamAndPersist's own
+        // catch-block write) before repairing status below, or a write from the cancelled
+        // job can land after this one and clobber it back to Streaming/Failed.
+        streamingJobs.remove(conversationId)?.cancelAndJoin()
         val messages = messageDao.observeForConversation(conversationId).first()
         val unfinished = messages.lastOrNull { it.status == MessageStatus.Streaming.name || it.status == MessageStatus.Sending.name }
         if (unfinished != null) {

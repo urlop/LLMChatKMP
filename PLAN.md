@@ -64,9 +64,9 @@ Derived from `ROADMAP.md`. Numbered steps are meant to be done in order; each ma
 ## Phase 5 — Testing and CI
 
 34. [x] `commonTest`: use cases/repositories tested against fakes (`FakeChatRepositoryTest`).
-35. [ ] `commonTest`: `ChatViewModel` state transitions with Turbine and `runTest` — not written yet.
+35. [x] `commonTest`: `ChatViewModel` state transitions with Turbine and `runTest` (`ChatViewModelTest`).
 36. [x] `commonTest`: SSE parser edge cases (split chunks, empty lines, malformed JSON) — `ChatSseParserTest`.
-37. [x] Repository test with Ktor `MockEngine` (`ChatCompletionsApiTest`) + Room migration test with a real in-memory-file DB (`MigrationTest`). A full `RoomChatRepository` integration test (DB + fake reply source together) is not written yet.
+37. [x] Repository test with Ktor `MockEngine` (`ChatCompletionsApiTest`) + Room migration test with a real in-memory-file DB (`MigrationTest`) + full `RoomChatRepository` integration test against a real file-backed DB and `FakeReplySource` together (`RoomChatRepositoryTest`: send-to-Done persistence, retry-from-Failed, stop-mid-stream). Writing the stop-mid-stream case surfaced and fixed a real race in `stopStreaming` (it cancelled the streaming job without joining it, so a late in-flight write could clobber the Done/Failed repair back to Streaming) — `stopStreaming` now `cancelAndJoin()`s before reading and repairing status.
 38. [ ] One Compose UI test for send → stream → done — not written yet.
 39. [ ] GitHub Actions: lint + `allTests` + Android assemble on Ubuntu — not written yet.
 40. [ ] GitHub Actions: iOS framework build and iOS tests on a macOS runner — not written yet.
