@@ -2,7 +2,7 @@
 
 Derived from `ROADMAP.md`. Numbered steps are meant to be done in order; each maps to one roadmap checklist item. Stretch goals are intentionally excluded — do not start them until Phase 6 is fully done.
 
-**Status (as of 2026-09-25):** Phases 1–4 are functionally complete and verified end-to-end on the Android emulator (send → stream → persist → retry/stop paths all wired; screenshots confirmed no crashes and correct spacing/layout after two real bugs found and fixed during manual QA). iOS/JVM targets compile cleanly (including Room/KSP codegen and Kotlin/Native klibs) but were **not runtime-verified** — this sandbox has no macOS/Xcode/simulator, so iOS framework linking and any on-device behavior there is unconfirmed. Phase 5 is now fully done (ViewModel/repository/UI test coverage, ktlint+allTests+assemble CI on Ubuntu, an iOS CI workflow written but unexecuted, Kover wired up) except where noted; Phase 6 docs/release steps are not yet done. See the "❓ NEEDS HUMAN" notes inline for what's blocked and why.
+**Status (as of 2026-09-25):** Phases 1–4 are functionally complete and verified end-to-end on the Android emulator (send → stream → persist → retry/stop paths all wired; screenshots confirmed no crashes and correct spacing/layout after two real bugs found and fixed during manual QA). iOS/JVM targets compile cleanly (including Room/KSP codegen and Kotlin/Native klibs) but were **not runtime-verified** — this sandbox has no macOS/Xcode/simulator, so iOS framework linking and any on-device behavior there is unconfirmed. Phase 5 is fully done (ViewModel/repository/UI test coverage, ktlint+allTests+assemble CI on Ubuntu, an iOS CI workflow written but unexecuted, Kover wired up). Phase 6 is done except the two release/CV steps that are inherently the user's to do (46, 47). See the "❓ NEEDS HUMAN" notes inline for what's blocked and why.
 
 ## Phase 1 — Project setup
 
@@ -76,10 +76,10 @@ Derived from `ROADMAP.md`. Numbered steps are meant to be done in order; each ma
 
 ## Phase 6 — Polish, README and release
 
-42. [ ] README: pitch, Android + iOS screenshots side by side, streaming GIF — not started (have Android screenshots from manual QA to build from; no iOS screenshots possible here).
-43. [ ] Architecture diagram (Mermaid) — not started.
-44. [ ] "Decisions and trade-offs" section — not started (this PLAN.md's inline notes are the raw material for it).
-45. [ ] "How to run" + fake-backend mode doc — not started (the fake-backend mode itself is done and is the default; just needs documenting).
+42. [x] README: pitch, screenshots, streaming GIF (`README.md`). Booted the local Android emulator, installed the debug APK, and captured fresh real screenshots (conversation list, a completed chat, settings, and an offline-banner state) plus a `streaming-demo.gif` assembled from live mid-stream frames — all under `docs/screenshots/`. **iOS screenshots: still not possible here** (no macOS/Xcode/simulator). While capturing these, noticed the offline banner stayed on for the whole session despite the emulator reporting a validated network connection via `dumpsys connectivity` — flagged in the README as unconfirmed (could be emulator-specific or a real bug in `AndroidConnectivityObserver`'s first-callback handling); not investigated further since it's outside this pass's scope.
+43. [x] Architecture diagram (Mermaid) — in `README.md`, modules + data flow for one message.
+44. [x] "Decisions and trade-offs" section — in `README.md`.
+45. [x] "How to run" + fake-backend mode doc — in `README.md` (fake-backend mode, switching to a real `ReplySource`, running each target, running tests).
 46. [ ] **❓ NEEDS HUMAN:** signed release APK on GitHub Releases — needs a signing keystore (generate + password, a decision only you should make) and a GitHub Releases target (depends on step 7).
 47. [ ] **❓ NEEDS HUMAN:** add to CV/LinkedIn — inherently something only you can do.
 

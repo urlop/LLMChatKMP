@@ -1,35 +1,200 @@
-This is a Kotlin Multiplatform project targeting Android, iOS, Desktop (JVM).
+# MyLLMChatKMP
 
-* [/iosApp](./iosApp/iosApp) contains an iOS application. Even if you’re sharing your UI with Compose Multiplatform,
-  you need this entry point for your iOS app. This is also where you should add SwiftUI code for your project.
+A Kotlin Multiplatform LLM chat app for Android and iOS: one shared Compose UI, one shared
+`ChatViewModel`, one shared Room database and Ktor client, driving native shells on each
+platform. Streams replies token-by-token over SSE, keeps full history offline, and runs with
+zero setup out of the box against a built-in fake backend — no API key required to try it.
 
-* [/shared](./shared/src) is for code that will be shared across your Compose Multiplatform applications.
-  It contains several subfolders:
-  - [commonMain](./shared/src/commonMain/kotlin) is for code that’s common for all targets.
-  - Other folders are for Kotlin code that will be compiled for only the platform indicated in the folder name.
-    For example, if you want to use Apple’s CoreCrypto for the iOS part of your Kotlin app,
-    the [iosMain](./shared/src/iosMain/kotlin) folder would be the right place for such calls.
-    Similarly, if you want to edit the Desktop (JVM) specific part, the [jvmMain](./shared/src/jvmMain/kotlin)
-    folder is the appropriate location.
+<!--
+NEEDS HUMAN: badge URLs below use a `<owner>/<repo>` placeholder because this repo hasn't been
+pushed to GitHub yet (see PLAN.md step 7). Once it has a remote, replace the placeholder in both
+badge URLs (and the link target) with the real owner/repo.
+-->
+[![CI](https://github.com/<owner>/<repo>/actions/workflows/ci.yml/badge.svg)](https://github.com/<owner>/<repo>/actions/workflows/ci.yml)
+[![iOS](https://github.com/<owner>/<repo>/actions/workflows/ios.yml/badge.svg)](https://github.com/<owner>/<repo>/actions/workflows/ios.yml)
+![coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/<owner>/<repo>/main/.github/badges/coverage.json)
 
-### Running the apps
+## Screenshots
 
-Use the run configurations provided by the run widget in your IDE's toolbar. You can also use these commands and options:
+| Conversation list | Chat (streaming, offline banner) | Settings |
+| --- | --- | --- |
+| ![Conversation list](docs/screenshots/01-conversation-list.png) | ![Chat conversation](docs/screenshots/02-chat-conversation.png) | ![Settings](docs/screenshots/03-settings.png) |
 
-- Android app: `./gradlew :androidApp:assembleDebug`
-- Desktop app:
-  - Hot reload: `./gradlew :desktopApp:hotRun --auto`
+![Streaming a reply](docs/screenshots/streaming-demo.gif)
+
+All screenshots above are from the Android emulator. **iOS screenshots aren't included**: this
+project was built in a sandbox with no macOS/Xcode/simulator available, so the iOS side compiles
+(including the Kotlin/Native framework) but has never actually been run on-device or in the
+simulator — see the `❓ NEEDS HUMAN` notes in [PLAN.md](PLAN.md) for exactly what that blocks.
+
+The "You're offline" banner in the chat screenshot is a real state the UI renders, not a mockup —
+though note it stayed on throughout this emulator session despite the emulator reporting a
+validated network connection (`adb shell dumpsys connectivity`), which looks like either an
+emulator-specific quirk or a real bug in `AndroidConnectivityObserver`'s first callback; it's
+unconfirmed either way and worth a closer look before relying on that banner in production.
+
+## Architecture
+
+```mermaid
+flowchart TB
+    subgraph Shells["Platform shells (native entry points only)"]
+        AndroidApp["androidApp\n(Activity, manifest)"]
+        DesktopApp["desktopApp\n(JVM entry point)"]
+        IosApp["iosApp\n(Xcode project, SwiftUI host)"]
+    end
+
+    subgraph Shared["shared (Compose UI + ViewModels + Koin, all commonMain)"]
+        UI["ChatScreen / ConversationListScreen / SettingsScreen"]
+        VM["ChatViewModel\nStateFlow&lt;ChatUiState&gt;"]
+        DI["Koin: commonModule + platformModule\n(expect/actual per target)"]
+    end
+
+    subgraph Domain["shared:domain (pure Kotlin, no platform deps)"]
+        Models["Conversation / Message / MessageStatus / ChatEvent"]
+        UseCase["SendMessageUseCase"]
+        RepoIface["ChatRepository / ReplySource (interfaces)"]
+        Fake["FakeChatRepository\n(default in-memory impl)"]
+    end
+
+    subgraph Data["shared:data (Room + Ktor + DataStore + SecureStorage)"]
+        RoomRepo["RoomChatRepository\n(DB is the single source of truth)"]
+        Room[("Room DB\nConversationEntity / MessageEntity")]
+        Ktor["ChatCompletionsApi\n(Ktor client, SSE parsing)"]
+        FakeSource["FakeReplySource\n(canned text, default binding)"]
+        RemoteSource["RemoteReplySource\n(OpenAI-compatible /chat/completions)"]
+        Settings["DataStoreSettingsRepository"]
+        Secure["SecureStorage\n(expect/actual per platform)"]
+    end
+
+    AndroidApp --> UI
+    DesktopApp --> UI
+    IosApp --> UI
+    UI --> VM --> UseCase --> RepoIface
+    RepoIface -.implemented by.-> Fake
+    RepoIface -.implemented by.-> RoomRepo
+    RoomRepo --> Room
+    RoomRepo --> FakeSource
+    RoomRepo -.swap via Koin.-> RemoteSource
+    RemoteSource --> Ktor
+    DI --> Settings
+    DI --> Secure
+    Room -- "Flow<List<Message>>" --> VM
+```
+
+**Data flow for one message:** `ChatScreen` dispatches `ChatIntent.Send` → `ChatViewModel` calls
+`SendMessageUseCase` → `RoomChatRepository` writes the user message to Room, then collects
+`ReplySource.streamReply(...)` (a `Flow<ChatEvent>`), persisting each delta to Room roughly every
+50ms (not per-token — see below) → the UI never reads that stream directly, it only observes
+`messageDao.observeForConversation(...)` as a `Flow`, so the database is the single source of
+truth for what's on screen.
+
+## Decisions and trade-offs
+
+- **Room over SQLDelight.** Both have first-class KMP support; Room's KSP-based DAOs and Flow
+  queries needed less boilerplate glue for this project's scope, and its migration story
+  (`Migration(1, 2)`) is exercised directly by `MigrationTest`.
+- **One `shared` module for presentation, not a fourth Gradle module.** `shared:domain` and
+  `shared:data` are real Gradle modules; ViewModels/Compose screens/Koin wiring stay as organized
+  packages inside `shared` instead, since that's also where the iOS framework and Compose
+  resources are produced — splitting presentation out further would add framework-export
+  complexity for little benefit at this project's size.
+- **The database is the single source of truth, not the network stream.** `RoomChatRepository`
+  persists deltas as they arrive; the UI only ever reads via `observeMessages`. This means killing
+  the app mid-stream and reopening it always shows consistent state (the dangling-stream sweep in
+  `MessageDao.markDanglingStreamsAsFailed()` handles the interrupted case), at the cost of every
+  token round-tripping through the DB instead of flowing UI-only.
+- **Batching streamed writes every ~50ms**, not per token. Persisting on every SSE delta would
+  mean a DB write every few milliseconds during a fast stream; batching by elapsed time
+  (`TimeSource.Monotonic`) cuts that dramatically while keeping the UI feeling live.
+- **`FakeReplySource` is the default Koin binding**, not a test-only fixture. The whole point is
+  that UI work, and anyone cloning the repo, never needs a real API key or network connection to
+  see the app work end-to-end — see "Fake-backend mode" below.
+- **iOS secure storage is `NSUserDefaults`, not Keychain, and this is a known gap, not an
+  oversight.** Real Keychain access needs raw `Security.framework` C interop
+  (`SecItemAdd`/`SecItemCopyMatching`), and this project was built in a sandbox with no
+  Mac/simulator to verify a read-back actually round-trips correctly. Shipping unverified
+  low-level CoreFoundation interop felt riskier than clearly flagging the gap (see the `TODO` in
+  `IosSecureStorage.kt` and PLAN.md step 22).
+- **ktlint over detekt.** Simpler fit for a project this size; a root `.editorconfig` covers
+  formatting rules, with generated Compose-resource/KSP/Room output excluded rather than fought.
+- **Kover pinned to 0.9.9, not the newest 0.9.x at the time.** Earlier releases don't support the
+  `com.android.kotlin.multiplatform.library` Gradle plugin this project uses for its KMP modules
+  ([kotlinx-kover#747](https://github.com/Kotlin/kotlinx-kover/issues/747)); 0.9.8+ fixed it.
+
+## How to run
+
+### Fake-backend mode (default, no API key needed)
+
+The app ships wired to `FakeReplySource` by default — every build, on every platform, streams
+canned replies word-by-word through the exact same pipeline a real model would use (same
+persistence, same retry/stop, same error states). This is the fastest way to see the whole app
+working:
+
+- **Android:** `./gradlew :androidApp:assembleDebug`, then install the APK, or use your IDE's run
+  configuration.
+- **Desktop (JVM):**
   - Standard run: `./gradlew :desktopApp:run`
-- iOS app: open the [/iosApp](./iosApp) directory in Xcode and run it from there.
+  - Hot reload: `./gradlew :desktopApp:hotRun --auto`
+- **iOS:** open [`iosApp/iosApp.xcodeproj`](iosApp/iosApp.xcodeproj) in Xcode and run it from
+  there. **Unverified** — see the screenshots section above.
+
+### Talking to a real model
+
+`RemoteReplySource` is fully implemented and unit-tested (`ChatCompletionsApiTest`, using Ktor's
+`MockEngine`) but isn't the active binding, since it needs a real endpoint and key. To switch:
+
+1. Pick any provider that speaks the OpenAI-compatible `/chat/completions` shape (OpenAI, Groq,
+   Together, a local Ollama server, etc. all work as-is).
+2. Enter your API key in the Settings screen — it's persisted through `SecureStorage`
+   (`EncryptedSharedPreferences` on Android; see the Android-only caveat above for iOS/JVM).
+3. In `commonModule()`, bind `single<ReplySource> { RemoteReplySource(...) }` in place of
+   `FakeReplySource`.
 
 ### Running tests
 
-Use the run button in your IDE's editor gutter, or run tests using Gradle tasks:
+- All JVM-backed tests, every module: `./gradlew allTests` (equivalent to what CI runs on Ubuntu —
+  iOS targets are skipped automatically on Linux since Kotlin/Native simulator tests need macOS)
+- Just the Android host tests: `./gradlew :shared:testAndroidHostTest`
+- Just the desktop/JVM tests: `./gradlew :shared:jvmTest`
+- iOS simulator tests (macOS only): `./gradlew :shared:iosSimulatorArm64Test`
+- Lint: `./gradlew ktlintCheck` (`ktlintFormat` to auto-fix)
+- Coverage report: `./gradlew koverHtmlReport` → `build/reports/kover/html/index.html`
 
-- Android tests: `./gradlew :shared:testAndroidHostTest`
-- Desktop tests: `./gradlew :shared:jvmTest`
-- iOS tests: `./gradlew :shared:iosSimulatorArm64Test`
+## Testing and CI
+
+- Domain/use-case logic against fakes: `FakeChatRepositoryTest`
+- SSE parsing edge cases (split chunks, empty lines, malformed JSON): `ChatSseParserTest`
+- Networking against a mocked HTTP client: `ChatCompletionsApiTest`
+- Room migration (1→2) against a real on-disk v1 database: `MigrationTest`
+- Full repository integration (real file-backed Room DB + fake reply source together, including
+  send/retry/stop): `RoomChatRepositoryTest`
+- ViewModel state transitions with Turbine: `ChatViewModelTest`
+- End-to-end Compose UI test (real gestures — typing, tapping Send — against the real screen +
+  ViewModel): `ChatScreenUiTest`
+- `.github/workflows/ci.yml`: ktlint, `allTests`, `androidApp:assembleDebug`, Kover reports, and a
+  self-hosted coverage badge on Ubuntu
+- `.github/workflows/ios.yml`: iOS framework build (device + simulator) and Kotlin/Native
+  simulator tests on macOS
+
+Neither workflow has actually executed yet — both need this repo pushed to GitHub first (and
+`ios.yml` needs a real macOS runner, which this sandbox doesn't have) — but every Gradle task they
+call has been run and verified locally. See [PLAN.md](PLAN.md) for the full, dated log of what's
+done, what's unverified, and why.
+
+## Project layout
+
+- [`androidApp`](androidApp), [`desktopApp`](desktopApp) — thin native entry points; almost no
+  logic lives here.
+- [`iosApp`](iosApp) — the Xcode project; the required native entry point even though the UI
+  itself is shared.
+- [`shared`](shared/src) — Compose UI screens, `ChatViewModel`/`SettingsViewModel`, Koin wiring.
+  Platform-specific code (e.g. Keychain/EncryptedSharedPreferences plumbing, the JVM `Dispatchers.Main`
+  provider) lives in per-target source sets (`androidMain`, `iosMain`, `jvmMain`).
+- [`shared/domain`](shared/domain/src/commonMain) — pure Kotlin: models, `ChatRepository`/
+  `ReplySource` interfaces, use cases, and `FakeChatRepository`. No platform dependencies at all.
+- [`shared/data`](shared/data/src/commonMain) — Room, Ktor, DataStore, secure storage, and
+  connectivity — the concrete implementations of the domain interfaces.
 
 ---
 
-Learn more about [Kotlin Multiplatform](https://www.jetbrains.com/help/kotlin-multiplatform-dev/get-started.html)…
+Learn more about [Kotlin Multiplatform](https://www.jetbrains.com/help/kotlin-multiplatform-dev/get-started.html).
