@@ -76,6 +76,15 @@ kotlin {
             implementation(libs.kotlinx.coroutines.test)
             implementation(libs.turbine)
         }
+        jvmTest.dependencies {
+            implementation(libs.compose.uiTest)
+            implementation(libs.compose.uiTestJunit4)
+            implementation(libs.junit)
+            // Compose UI tests load Skia through Skiko, which needs the current OS's native
+            // runtime on the classpath -- this accessor picks the right one (Windows here, Linux
+            // on the GitHub Actions runner) instead of hardcoding one platform's artifact.
+            implementation(compose.desktop.currentOs)
+        }
     }
 }
 
