@@ -2,7 +2,7 @@
 
 Derived from `ROADMAP.md`. Numbered steps are meant to be done in order; each maps to one roadmap checklist item. Stretch goals are intentionally excluded — do not start them until Phase 6 is fully done.
 
-**Status (as of 2026-09-24):** Phases 1–4 are functionally complete and verified end-to-end on the Android emulator (send → stream → persist → retry/stop paths all wired; screenshots confirmed no crashes and correct spacing/layout after two real bugs found and fixed during manual QA). iOS/JVM targets compile cleanly (including Room/KSP codegen and Kotlin/Native klibs) but were **not runtime-verified** — this sandbox has no macOS/Xcode/simulator, so iOS framework linking and any on-device behavior there is unconfirmed. Phase 5 has partial test coverage; CI workflows and Phase 6 docs/release steps are not yet done. See the "❓ NEEDS HUMAN" notes inline for what's blocked and why.
+**Status (as of 2026-09-25):** Phases 1–4 are functionally complete and verified end-to-end on the Android emulator (send → stream → persist → retry/stop paths all wired; screenshots confirmed no crashes and correct spacing/layout after two real bugs found and fixed during manual QA). iOS/JVM targets compile cleanly (including Room/KSP codegen and Kotlin/Native klibs) but were **not runtime-verified** — this sandbox has no macOS/Xcode/simulator, so iOS framework linking and any on-device behavior there is unconfirmed. Phase 5 is now fully done (ViewModel/repository/UI test coverage, ktlint+allTests+assemble CI on Ubuntu, an iOS CI workflow written but unexecuted, Kover wired up) except where noted; Phase 6 docs/release steps are not yet done. See the "❓ NEEDS HUMAN" notes inline for what's blocked and why.
 
 ## Phase 1 — Project setup
 
@@ -68,11 +68,11 @@ Derived from `ROADMAP.md`. Numbered steps are meant to be done in order; each ma
 36. [x] `commonTest`: SSE parser edge cases (split chunks, empty lines, malformed JSON) — `ChatSseParserTest`.
 37. [x] Repository test with Ktor `MockEngine` (`ChatCompletionsApiTest`) + Room migration test with a real in-memory-file DB (`MigrationTest`) + full `RoomChatRepository` integration test against a real file-backed DB and `FakeReplySource` together (`RoomChatRepositoryTest`: send-to-Done persistence, retry-from-Failed, stop-mid-stream). Writing the stop-mid-stream case surfaced and fixed a real race in `stopStreaming` (it cancelled the streaming job without joining it, so a late in-flight write could clobber the Done/Failed repair back to Streaming) — `stopStreaming` now `cancelAndJoin()`s before reading and repairing status.
 38. [x] One Compose UI test for send → stream → done (`ChatScreenUiTest`, JVM desktop target: real `ChatScreen` + `ChatViewModel` + `FakeChatRepository`, drives actual typing/tap gestures via `createComposeRule()` and asserts on rendered nodes).
-39. [ ] GitHub Actions: lint + `allTests` + Android assemble on Ubuntu — not written yet.
-40. [ ] GitHub Actions: iOS framework build and iOS tests on a macOS runner — not written yet.
-41. [ ] Kover coverage report + CI badge — not started.
+39. [x] GitHub Actions: lint + `allTests` + Android assemble on Ubuntu (`.github/workflows/ci.yml`).
+40. [x] GitHub Actions: iOS framework build and iOS tests on a macOS runner (`.github/workflows/ios.yml`) — task names verified locally via `./gradlew tasks --all` but the workflow itself has never actually executed (needs step 7's GitHub remote, and this sandbox has no macOS runner to dry-run it on).
+41. [x] Kover coverage report + CI badge: Kover applied to `shared`/`shared:domain`/`shared:data` (root aggregates via `dependencies { kover(project(...)) }`); `./gradlew koverHtmlReport`/`koverXmlReport` verified working locally (required bumping to Kover 0.9.9 — earlier 0.9.x doesn't support the `com.android.kotlin.multiplatform.library` plugin this project uses, see [kotlinx-kover#747](https://github.com/Kotlin/kotlinx-kover/issues/747)). CI computes the line-coverage % from Kover's merged JaCoCo-XML and commits a self-hosted shields.io endpoint badge to `.github/badges/coverage.json` on pushes to main (no third-party coverage account needed) — **❓ NEEDS HUMAN:** the README badge URL embeds the GitHub owner/repo path, which doesn't exist yet (step 7).
 
-**Done when:** a pull request shows green checks for Android and iOS. — **❓ NEEDS HUMAN:** requires step 7 (a GitHub remote) before any CI can run at all.
+**Done when:** a pull request shows green checks for Android and iOS. — **❓ NEEDS HUMAN:** requires step 7 (a GitHub remote) before any CI can actually run; the workflow files are written and the Gradle side (ktlint/allTests/assemble/Kover) is verified working locally.
 
 ## Phase 6 — Polish, README and release
 
