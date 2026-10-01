@@ -11,7 +11,7 @@ concurrency:
 
 jobs:
   build:
-    # Kotlin/Native iOS compilation and simulator tests only run on macOS -- see PLAN.md phase 5,
+    # Kotlin/Native iOS compilation and simulator tests only run on macOS -- see PLAN_LLM.md phase 5,
     # step 40 (this sandbox has no macOS/Xcode, so this workflow was never actually run here;
     # it's written from the same task names verified to exist via `./gradlew tasks --all`).
     runs-on: macos-latest

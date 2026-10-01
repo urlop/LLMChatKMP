@@ -7,7 +7,7 @@ zero setup out of the box against a built-in fake backend — no API key require
 
 <!--
 NEEDS HUMAN: badge URLs below use a `<owner>/<repo>` placeholder because this repo hasn't been
-pushed to GitHub yet (see PLAN.md step 7). Once it has a remote, replace the placeholder in both
+pushed to GitHub yet (see PLAN_LLM.md step 7). Once it has a remote, replace the placeholder in both
 badge URLs (and the link target) with the real owner/repo.
 -->
 [![CI](https://github.com/<owner>/<repo>/actions/workflows/ci.yml/badge.svg)](https://github.com/<owner>/<repo>/actions/workflows/ci.yml)
@@ -25,7 +25,7 @@ badge URLs (and the link target) with the real owner/repo.
 All screenshots above are from the Android emulator. **iOS screenshots aren't included**: this
 project was built in a sandbox with no macOS/Xcode/simulator available, so the iOS side compiles
 (including the Kotlin/Native framework) but has never actually been run on-device or in the
-simulator — see the `❓ NEEDS HUMAN` notes in [PLAN.md](PLAN.md) for exactly what that blocks.
+simulator — see the `❓ NEEDS HUMAN` notes in [PLAN.md](PLAN_LLM.md) for exactly what that blocks.
 
 The "You're offline" banner in the chat screenshot is a real state the UI renders, not a mockup —
 though note it stayed on throughout this emulator session despite the emulator reporting a
@@ -178,7 +178,7 @@ working:
 
 Neither workflow has actually executed yet — both need this repo pushed to GitHub first (and
 `ios.yml` needs a real macOS runner, which this sandbox doesn't have) — but every Gradle task they
-call has been run and verified locally. See [PLAN.md](PLAN.md) for the full, dated log of what's
+call has been run and verified locally. See [PLAN.md](PLAN_LLM.md) for the full, dated log of what's
 done, what's unverified, and why.
 
 ## Project layout
