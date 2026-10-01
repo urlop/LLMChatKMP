@@ -1,11 +1,13 @@
 package com.ruby.myllmchatkmp.data.network
 
+import com.ruby.myllmchatkmp.domain.model.ChatError
 import com.ruby.myllmchatkmp.domain.model.ChatEvent
 import io.ktor.client.HttpClient
 import io.ktor.client.request.header
 import io.ktor.client.request.preparePost
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsChannel
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.contentType
@@ -22,19 +24,30 @@ import kotlinx.coroutines.flow.channelFlow
  */
 class ChatCompletionsApi(
     private val httpClient: HttpClient,
-    private val config: ChatApiConfig,
+    private val configProvider: suspend () -> ChatApiConfig,
 ) {
+    constructor(httpClient: HttpClient, config: ChatApiConfig) : this(httpClient, { config })
+
     fun streamReply(messages: List<ChatMessageDto>): Flow<ChatEvent> =
         channelFlow {
             try {
+                // Resolved per call so key/model edits in Settings apply without restarting.
+                val config = configProvider()
                 httpClient
                     .preparePost("${config.baseUrl}/chat/completions") {
                         header(HttpHeaders.Authorization, "Bearer ${config.apiKey}")
                         contentType(ContentType.Application.Json)
-                        setBody(ChatCompletionRequestDto(model = config.model, messages = messages, stream = true))
+                        setBody(ChatCompletionRequestDto(model = config.model, messages = messages, stream = true, temperature = config.temperature))
                     }.execute { response ->
                         if (!response.status.isSuccess()) {
-                            send(ChatEvent.Error(mapHttpStatusToChatError(response.status)))
+                            val body = runCatching { response.bodyAsText() }.getOrDefault("").take(500)
+                            println("ChatHttp: ${response.status} from ${config.baseUrl} (model=${config.model}) body=$body")
+                            val mapped = mapHttpStatusToChatError(response.status)
+                            send(
+                                ChatEvent.Error(
+                                    if (mapped is ChatError.Unknown) ChatError.Unknown("${mapped.message}: $body") else mapped,
+                                ),
+                            )
                             return@execute
                         }
                         val parser = ChatSseParser()
@@ -50,6 +63,7 @@ class ChatCompletionsApi(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                println("ChatHttp: request failed: $e")
                 send(ChatEvent.Error(mapThrowableToChatError(e)))
             }
         }

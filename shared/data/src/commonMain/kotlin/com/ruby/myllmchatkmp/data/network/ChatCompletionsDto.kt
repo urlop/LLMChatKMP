@@ -8,7 +8,9 @@ import kotlinx.serialization.Serializable
 data class ChatCompletionRequestDto(
     val model: String,
     val messages: List<ChatMessageDto>,
-    val stream: Boolean = true,
+    // No default: defaultJson doesn't encode defaults, so a default here would silently drop `stream`.
+    val stream: Boolean,
+    val temperature: Float? = null,
 )
 
 @Serializable

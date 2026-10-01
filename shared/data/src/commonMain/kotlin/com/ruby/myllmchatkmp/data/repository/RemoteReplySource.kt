@@ -1,6 +1,8 @@
 package com.ruby.myllmchatkmp.data.repository
 
+import com.ruby.myllmchatkmp.data.network.ChatApiConfig
 import com.ruby.myllmchatkmp.data.network.ChatCompletionsApi
+import com.ruby.myllmchatkmp.data.network.createHttpClient
 import com.ruby.myllmchatkmp.data.network.ChatMessageDto
 import com.ruby.myllmchatkmp.domain.model.ChatEvent
 import com.ruby.myllmchatkmp.domain.model.Message
@@ -32,3 +34,7 @@ class RemoteReplySource(
             content = content,
         )
 }
+
+/** Builds a [RemoteReplySource] with its own HTTP client; [configProvider] is resolved on every request. */
+fun createRemoteReplySource(configProvider: suspend () -> ChatApiConfig): RemoteReplySource =
+    RemoteReplySource(ChatCompletionsApi(createHttpClient(), configProvider))
