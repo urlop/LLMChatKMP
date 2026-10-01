@@ -3,16 +3,12 @@
 A Kotlin Multiplatform LLM chat app for Android and iOS: one shared Compose UI, one shared
 `ChatViewModel`, one shared Room database and Ktor client, driving native shells on each
 platform. Streams replies token-by-token over SSE, keeps full history offline, and runs with
-zero setup out of the box against a built-in fake backend — no API key required to try it.
+zero setup out of the box against a built-in fake backend — no API key required to try it — and
+talks to a real model (Groq, or any OpenAI-compatible endpoint) once you add a key in Settings.
 
-<!--
-NEEDS HUMAN: badge URLs below use a `<owner>/<repo>` placeholder because this repo hasn't been
-pushed to GitHub yet (see PLAN_LLM.md step 7). Once it has a remote, replace the placeholder in both
-badge URLs (and the link target) with the real owner/repo.
--->
-[![CI](https://github.com/<owner>/<repo>/actions/workflows/ci.yml/badge.svg)](https://github.com/<owner>/<repo>/actions/workflows/ci.yml)
-[![iOS](https://github.com/<owner>/<repo>/actions/workflows/ios.yml/badge.svg)](https://github.com/<owner>/<repo>/actions/workflows/ios.yml)
-![coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/<owner>/<repo>/main/.github/badges/coverage.json)
+[![CI](https://github.com/urlop/LLMChatKMP/actions/workflows/ci.yml/badge.svg)](https://github.com/urlop/LLMChatKMP/actions/workflows/ci.yml)
+[![iOS](https://github.com/urlop/LLMChatKMP/actions/workflows/ios.yml/badge.svg)](https://github.com/urlop/LLMChatKMP/actions/workflows/ios.yml)
+![coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/urlop/LLMChatKMP/main/.github/badges/coverage.json)
 
 ## Screenshots
 
@@ -111,9 +107,11 @@ truth for what's on screen.
 - **Batching streamed writes every ~50ms**, not per token. Persisting on every SSE delta would
   mean a DB write every few milliseconds during a fast stream; batching by elapsed time
   (`TimeSource.Monotonic`) cuts that dramatically while keeping the UI feeling live.
-- **`FakeReplySource` is the default Koin binding**, not a test-only fixture. The whole point is
-  that UI work, and anyone cloning the repo, never needs a real API key or network connection to
-  see the app work end-to-end — see "Fake-backend mode" below.
+- **`FakeReplySource` is the fallback when no API key is saved**, not a test-only fixture. The
+  Koin binding is a `ConfiguredReplySource` that uses the real Groq-backed `RemoteReplySource` as
+  soon as a key exists in Settings and `FakeReplySource` otherwise, so UI work, and anyone cloning
+  the repo, never needs a real API key or network connection to see the app work end-to-end — see
+  "Fake-backend mode" below.
 - **iOS secure storage is `NSUserDefaults`, not Keychain, and this is a known gap, not an
   oversight.** Real Keychain access needs raw `Security.framework` C interop
   (`SecItemAdd`/`SecItemCopyMatching`), and this project was built in a sandbox with no
@@ -128,9 +126,9 @@ truth for what's on screen.
 
 ## How to run
 
-### Fake-backend mode (default, no API key needed)
+### Fake-backend mode (default until you add a key)
 
-The app ships wired to `FakeReplySource` by default — every build, on every platform, streams
+With no API key saved, the app uses `FakeReplySource` — every build, on every platform, streams
 canned replies word-by-word through the exact same pipeline a real model would use (same
 persistence, same retry/stop, same error states). This is the fastest way to see the whole app
 working:
@@ -143,17 +141,20 @@ working:
 - **iOS:** open [`iosApp/iosApp.xcodeproj`](iosApp/iosApp.xcodeproj) in Xcode and run it from
   there. **Unverified** — see the screenshots section above.
 
-### Talking to a real model
+### Talking to a real model (Groq)
 
-`RemoteReplySource` is fully implemented and unit-tested (`ChatCompletionsApiTest`, using Ktor's
-`MockEngine`) but isn't the active binding, since it needs a real endpoint and key. To switch:
+`RemoteReplySource` is wired in and is used automatically once an API key is saved. The endpoint
+is Groq's OpenAI-compatible API (`https://api.groq.com/openai/v1`, set in `commonModule()`):
 
-1. Pick any provider that speaks the OpenAI-compatible `/chat/completions` shape (OpenAI, Groq,
-   Together, a local Ollama server, etc. all work as-is).
-2. Enter your API key in the Settings screen — it's persisted through `SecureStorage`
-   (`EncryptedSharedPreferences` on Android; see the Android-only caveat above for iOS/JVM).
-3. In `commonModule()`, bind `single<ReplySource> { RemoteReplySource(...) }` in place of
-   `FakeReplySource`.
+1. Create an API key at [console.groq.com](https://console.groq.com/keys).
+2. In the app's Settings screen, enter the key — it's persisted through `SecureStorage`
+   (`EncryptedSharedPreferences` on Android; see the iOS/JVM caveat above) — and a model ID that
+   your account can use (e.g. `llama-3.3-70b-versatile`; Groq retires models over time, so check
+   its model list if you get a 404 `model_not_found`).
+3. Send a message. Key, model and temperature are read on every request, so no restart is needed.
+
+To use another OpenAI-compatible provider, change `GROQ_BASE_URL` in `commonModule()`. Request
+and error details are logged under the `ChatHttp` tag (the API key is redacted).
 
 ### Running tests
 
