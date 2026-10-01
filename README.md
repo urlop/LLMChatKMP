@@ -22,6 +22,11 @@ badge URLs (and the link target) with the real owner/repo.
 
 ![Streaming a reply](docs/screenshots/streaming-demo.gif)
 
+Live against the real [Groq](https://groq.com) API (key and model set in Settings), streaming a reply
+to a prompt typed into a new chat:
+
+![Live Groq reply](docs/screenshots/groq-live-demo.gif)
+
 All screenshots above are from the Android emulator. **iOS screenshots aren't included**: this
 project was built in a sandbox with no macOS/Xcode/simulator available, so the iOS side compiles
 (including the Kotlin/Native framework) but has never actually been run on-device or in the
