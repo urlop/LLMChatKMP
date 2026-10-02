@@ -14,10 +14,47 @@
 - The spec's starter code is untested. Wherever a task uses it, there is a verification task next to it.
 - Paths: Python commands run from `backend/` unless stated. Gradle commands run from the repo root. Shell examples are PowerShell (Windows 11).
 
+## Glossary for an Android developer
+
+Plain-language meanings of the backend and AI words used in this plan. Android/Kotlin equivalents are approximate.
+
+| Word | What it means here |
+| --- | --- |
+| Backend | A small server program that the app calls over the internet. It holds the secret key and does the AI work. |
+| Python 3.12 | The language of the backend. Version 3.12 is the one the spec fixes. |
+| FastAPI | A Python library for building the server and its endpoints. Closest Kotlin relative: Ktor server. |
+| `uvicorn` | The program that actually runs the FastAPI server (like pressing Run). `--reload` restarts it when you save a file. |
+| Endpoint / `/chat` | One URL on the server. The app sends a request to `/chat` and reads the reply. |
+| SSE (streaming) | The server sends the reply in small pieces while it is being written, so the app can show it word by word. Your app already reads this. |
+| `pyproject.toml` | Python's project file with the list of libraries. Like `build.gradle.kts` plus `libs.versions.toml`. |
+| Virtualenv (`.venv`) | A private folder of libraries for this project only, so it does not mix with other Python projects. |
+| `pip install` | Downloads the libraries from the list. Like Gradle sync. |
+| `pytest` | The test runner. Like JUnit; a test is a function whose name starts with `test_`. |
+| Fixture / mock | Saved sample data, or a fake object, used so a test does not call the real internet. Like `MockEngine` in your Ktor tests. |
+| Environment variable | A setting kept outside the code, e.g. `LLM_MODEL`. In PowerShell: `$env:LLM_MODEL = "..."` (lasts for that terminal window). |
+| `curl` | A command-line way to send a request to the server and see the raw reply. Good for checking the backend without the app. |
+| LLM | The language model (here run by Groq). |
+| `LLMClient` | A small interface in front of Groq, so the rest of the code does not care which model or company is behind it. Like a repository interface. |
+| Tool calling | The model can ask our code to run a function (for example "get Peru's inflation for 2024") and then use the result in its answer. |
+| Agent loop | The loop: ask the model, run the tool it asks for, give it the result, repeat. Maximum 5 rounds. |
+| World Bank API | A free web service that returns economic numbers. `null` in its data means "no number for that year". |
+| Cache (SQLite) | A small local database file where we keep the World Bank answers, so repeated requests do not hit the internet and tests give the same numbers every time. SQLite is the same engine Room uses on Android. |
+| RAG | Retrieval-Augmented Generation: before answering, find relevant text passages and give them to the model, so it answers from them and can cite them. |
+| Embedding | Turning a piece of text into a list of numbers so that texts with similar meaning are close to each other. |
+| Chroma | A local database that stores those number lists and finds the closest passages to a question. |
+| Chunk | A piece of an article (a section or part of one) stored as one searchable unit. |
+| Eval | An automatic test of answer quality: ask the app a fixed question and check the answer. |
+| Golden set / `golden.jsonl` | The list of 30 test questions with the correct answers. JSONL means one JSON object per line. |
+| Recall@5 | For a question, did the right passage appear among the top 5 found? |
+| LLM-as-judge / faithfulness | A second model call that checks whether every claim in an answer is backed by the data or passages. |
+| Langfuse trace | A web page showing everything that happened for one answer: prompts, tool calls, time, cost. |
+| ISO3 code | The 3-letter country code: PER, CHL, COL... |
+| CI / GitHub Actions | The automatic checks that run on GitHub after you push. |
+
 ## Definition of done
 
 Showable version (after milestone 5):
-- [ ] The KMP app chats through the FastAPI backend, and no Groq key is stored in or sent from the app.
+- [ ] The KMP app chats through the FastAPI backend, and the app has no provider, model or API-key settings: it only talks to the backend.
 - [ ] The agent answers number questions from World Bank data (cached in SQLite), with the year and indicator cited, and says "no data" when a value is null.
 - [ ] RAG over EN + ES Wikipedia "Economy of X" articles for 8 countries answers with citations shown as source chips; combined questions call both tools (max 5 steps).
 - [ ] A 30-case golden set runs in GitHub Actions against the cache, shows a pass rate, and fails when a prompt is broken.
@@ -31,32 +68,34 @@ Full version (after milestone 8):
 ## Milestone 1 — Backend skeleton
 
 **Goal:** the KMP app chats through a FastAPI `/chat` endpoint that proxies Groq and streams SSE.
-**Estimated hours:** 4–6
+In plain words: build a small server that sits between the app and Groq. The app talks to the server; the server holds the key and forwards the question to Groq.
+**Estimated hours:** 4–6 (spec range) · Sum of task estimates below: 13.5 h (see Q17)
 
 ### Tasks
 - [ ] 1.1 Run the Day-1 checklist items D1–D3 and D9 (Python, Groq models, tool calling/usage/limits, country codes). Write the results in the Day-1 section of this file. (~1.5 h)
 - [ ] 1.2 Create `backend/pyproject.toml`, `backend/app/__init__.py`, `backend/app/main.py` with `GET /health`, and a virtualenv in `backend/.venv`. Add `.venv/`, `backend/data/`, `.env` to `.gitignore`. Dependencies (names from the spec): fastapi, uvicorn, httpx, openai, pytest. Add the others when a milestone needs them. (~1 h)
-- [ ] 1.3 Write `backend/app/llm.py`: an `LLMClient` interface (a `typing.Protocol` or ABC) with a streaming chat method, and a `GroqLLMClient` using the `openai` SDK with `base_url` Groq's OpenAI-compatible URL. Read `GROQ_API_KEY` and `LLM_MODEL` from environment variables; no model name in code. Add `backend/.env.example`. (~1.5 h)
-- [ ] 1.4 Add `POST /chat` to `backend/app/main.py`: accept the body the KMP app sends (`model`, `messages`, `stream`, `temperature`, from `ChatCompletionRequestDto`), stream `data: {chunk json}\n\n` lines and a final `data: [DONE]\n\n`. Map upstream errors (401, 429, timeout) to HTTP statuses the app's `ErrorMapping.kt` already understands. (~1.5 h)
+- [ ] 1.3 Write `backend/app/llm.py`: an `LLMClient` interface (a `typing.Protocol` or ABC) with a streaming chat method, and a `GroqLLMClient` using the `openai` SDK with `base_url` Groq's OpenAI-compatible URL. Config loading (in `backend/app/config.py`, new): the Groq key comes from the `provider="groq"` entry of the repo-root `api-keys.local.xml` (gitignored) and can be overridden by `GROQ_API_KEY` (for CI and deploys, which have no such file); the temperature comes from a `temperature` attribute on that entry (value `0.7`; you add the attribute yourself, I do not edit the file), defaulting to 0.7 if absent; `LLM_MODEL` comes from the environment. No model name in code, and the `model` attribute in the XML is not used (Q2b). `run_agent` takes temperature as a parameter, so evals can pass their own value (Q16). Add `backend/.env.example` listing the environment variables with placeholder values only (`LLM_MODEL`, later the Langfuse keys); how they get set on Windows is Q2b. (~1.5 h)
+- [ ] 1.4 Add `POST /chat` to `backend/app/main.py`: accept an OpenAI-style body (`messages`, `stream`; tolerate and ignore `model` and `temperature`; the backend uses its configured temperature), stream `data: {chunk json}\n\n` lines and a final `data: [DONE]\n\n`. Map upstream errors (401, 429, timeout) to HTTP statuses the app's `ErrorMapping.kt` already understands. At this milestone the backend sends only plain text chunks; the extra `x_analyst` chunks are added in 3.7 and 4.6 (DL-15). (~1.5 h)
 - [ ] 1.5 Write `backend/tests/test_chat_sse.py` with a fake `LLMClient`: chunk format, `[DONE]` last, upstream error path. (~1 h)
-- [ ] 1.6 Change the KMP wiring: replace `GROQ_BASE_URL` in `shared/src/commonMain/kotlin/com/ruby/myllmchatkmp/di/CommonModule.kt` with a backend URL; change the "has API key" gate in `shared/data/src/commonMain/kotlin/com/ruby/myllmchatkmp/data/repository/ConfiguredReplySource.kt`; stop sending the user's Bearer key in `shared/data/.../network/ChatCompletionsApi.kt` (see Q2 for what replaces it). (~1.5 h)
-- [ ] 1.7 Replace the API key field with a backend URL field (or remove it, per Q2) in `shared/src/commonMain/.../presentation/settings/SettingsScreen.kt` and `SettingsViewModel.kt`. Fix the `gpt-4o-mini` default in `shared/data/.../settings/AppSettings.kt`. (~1.5 h)
+- [ ] 1.6 Change the KMP wiring: replace `GROQ_BASE_URL` and the per-request `ChatApiConfig` (key, model, temperature read from settings) in `shared/src/commonMain/kotlin/com/ruby/myllmchatkmp/di/CommonModule.kt` with a fixed backend URL (how the URL is supplied: Q2a). Remove the "has API key" gate: delete `shared/data/src/commonMain/kotlin/com/ruby/myllmchatkmp/data/repository/ConfiguredReplySource.kt` and bind `RemoteReplySource` directly; keep `FakeReplySource` for tests only. Stop sending the Bearer key in `shared/data/.../network/ChatCompletionsApi.kt` and stop sending `model`/`temperature` in the request. (~1.5 h)
+- [ ] 1.7 Remove the API key, model and temperature controls from `shared/src/commonMain/.../presentation/settings/SettingsScreen.kt` and `SettingsViewModel.kt` (theme stays), and drop `model` and `temperature` (and the `gpt-4o-mini` default) from `shared/data/.../settings/AppSettings.kt` and its DataStore repository. Then check whether `SecureStorage` (`shared/data/.../storage/` and its Android, iOS and JVM implementations) has any user left; remove it if not, unless Q2a needs a token. (~1.5 h)
 - [ ] 1.8 Allow the dev backend on Android: `androidApp/src/main/AndroidManifest.xml` has no cleartext setting and the emulator reaches the host through a special address (verify, see Gotchas). Check `iosApp/iosApp/Info.plist` for the equivalent. Run the app on the emulator. (~1 h)
 - [ ] 1.9 Update `shared/data/src/commonTest/.../ChatCompletionsApiTest.kt` and any ViewModel test touched. Run `./gradlew ktlintCheck allTests`. (~1 h)
 - [ ] 1.10 Create `backend/README.md` (stub): what the backend does, Python 3.12 setup, `.env` variables, run and test commands from this milestone. Extend it in each later milestone when a new command or variable appears. (~0.5 h)
 - [ ] 1.11 Rename the GitHub repo (spec suggests `latam-economy-analyst`; confirm the name, Q11). Then `git remote set-url origin <new url>`, and update the old name `urlop/LLMChatKMP` in the root `README.md` badge URLs (CI, iOS, coverage endpoint). Check with `git grep -n "LLMChatKMP"`. `rootProject.name` in `settings.gradle.kts` and the local folder name can stay. (~0.5 h)
+- [ ] 1.12 Update the docs that describe the app as a generic multi-provider client, after 1.6 and 1.7 land so they match the code. `README.md`: intro (the "any OpenAI-compatible endpoint" and "add a key in Settings" sentences), the live-Groq demo caption, the Data-flow/design notes about `ConfiguredReplySource` and `FakeReplySource` as the no-key fallback, the "Talking to a real model (Groq)" section (replace with "run the backend, point the app at it"), the architecture diagram node `RemoteReplySource (OpenAI-compatible /chat/completions)`, and the `SecureStorage`/provider line in the module list. `docs/ROADMAP.md`: the definition of done ("add an API key"), the secure-key outcome, the settings checklist item ("model name, temperature"), the screens item ("API key, model"), and the stretch item "Multiple providers behind one interface". Mark changed items as superseded instead of deleting them, so the history stays readable. Leave `docs/PLAN_LLM.md` as history. Check with `git grep -n -i -E "provider|api key|any OpenAI-compatible" -- README.md docs/ROADMAP.md`. (~1 h)
 
 ### Acceptance criteria
 - App chats through the backend; the Groq key is not in the app.
   - Backend running: `uvicorn app.main:app --reload` and `curl http://localhost:8000/health` returns HTTP 200.
   - `curl -N -X POST http://localhost:8000/chat -H "Content-Type: application/json" -d "{\"messages\":[{\"role\":\"user\",\"content\":\"Say hi\"}],\"stream\":true}"` prints several lines starting with `data: {` whose `choices[0].delta.content` is text, and the last line is `data: [DONE]`.
-  - In the emulator, a message streams token by token into the bubble, and the Settings screen has no Groq key field (or no field that is sent to Groq).
-  - `git grep -n -i "api.groq.com" -- shared androidApp iosApp desktopApp` returns nothing.
+  - In the emulator, a message streams token by token into the bubble, and the Settings screen has no API key, model or temperature controls.
+  - `git grep -n -i -E "api.groq.com|apiKey|getApiKey" -- shared androidApp iosApp desktopApp` returns nothing (adjust if Q2a adds a token).
   - `./gradlew ktlintCheck allTests` passes.
 
 ### Tests to write
-- `backend/tests/test_chat_sse.py` (format, `[DONE]`, error mapping).
-- Updated `ChatCompletionsApiTest` for the new config.
+- `backend/tests/test_chat_sse.py` (format, `[DONE]`, error mapping, ignores client `model`).
+- Updated `ChatCompletionsApiTest` and settings tests for the removed fields.
 
 ### Commands
 ```powershell
@@ -72,18 +111,20 @@ pytest
 ```
 
 ### Risks / gotchas
-- The SSE format must match what `ChatSseParser.kt` reads: `data:` lines, JSON with `choices[0].delta.content`, `data: [DONE]`. It ignores non-`data:` lines and uses `ignoreUnknownKeys = true`.
+- The SSE format must match what `ChatSseParser.kt` reads: `data:` lines, JSON with `choices[0].delta.content`, `data: [DONE]`. It ignores non-`data:` lines and uses `ignoreUnknownKeys = true`. The extra `x_analyst` chunks (DL-15) come later, in milestones 3 and 4.
 - Android emulator cannot reach the host's `localhost`; the usual alias is `10.0.2.2` (verify). Cleartext HTTP may be blocked by default on Android and iOS (verify); the manifest currently has no setting.
 - iOS cannot be run (no Mac, per `docs/PLAN_LLM.md`); do not claim it works. See Q10.
-- Keep the Groq key in `backend/.env` only; check `.gitignore` before the first commit.
-- `api-keys.local.xml` exists at the repo root (gitignored); I found no code using it. Do not commit it or copy values from it.
+- The Groq key lives only on the backend. `api-keys.local.xml` (repo root, gitignored) is a local scratch file with `<key provider=... model=... baseUrl=...>` entries for groq and openai; no code reads it yet, and its header says the app does not read it. Only the backend config loader (task 1.3) may read it. Never commit it, print it, or paste values into logs, traces or this file; confirm `git check-ignore api-keys.local.xml` prints the path.
+- The XML's `model` value is a local note, not config; model names come from Day-1 item D2.
+- Removing settings fields changes the DataStore content on existing installs; check that an old settings file still loads (task 1.9).
 
 ---
 
 ## Milestone 2 — Data tools
 
 **Goal:** `get_indicator` and `get_country_info` over the World Bank API with a SQLite cache, tested without the LLM.
-**Estimated hours:** 3–5
+In plain words: two Python functions that fetch economic numbers from the World Bank and save them locally, so later steps and tests can reuse them.
+**Estimated hours:** 3–5 (spec range) · Sum of task estimates below: 9 h (see Q17)
 
 ### Tasks
 - [ ] 2.1 Run Day-1 items D4, D5 and D8 (indicator coverage, error shapes, pagination). Save 4–5 real responses as fixtures in `backend/tests/fixtures/`. (~1.5 h)
@@ -125,7 +166,8 @@ python -c "from app.worldbank import get_country_info; print(get_country_info('P
 ## Milestone 3 — RAG over Wikipedia
 
 **Goal:** answers cite Wikipedia passages, shown as source chips in the app.
-**Estimated hours:** 5–7
+In plain words: download the Wikipedia economy articles, cut them into pieces, make them searchable by meaning, and show the passages used as tappable chips under the answer.
+**Estimated hours:** 5–7 (spec range) · Sum of task estimates below: 15 h (see Q17)
 
 ### Tasks
 - [ ] 3.1 Run Day-1 items D6 and D7 (embedding model choice; the 16 article titles resolve and how sections appear in the extract). (~1.5 h)
@@ -134,8 +176,8 @@ python -c "from app.worldbank import get_country_info; print(get_country_info('P
 - [ ] 3.4 Write `backend/app/ingest.py` step 3: embed with the model chosen in D6 and store in Chroma persisted at `backend/data/chroma/`. Make the collection name include the chunk size so two configs can coexist. (~1.5 h)
 - [ ] 3.5 Write `backend/app/retrieval.py` `search_docs(query, k)` returning text, metadata and url; optional `country` and `lang` filters only if tests show they help. (~1 h)
 - [ ] 3.6 Write `backend/tests/test_retrieval.py`: ingest a tiny two-article fixture into a temporary Chroma directory; check metadata, ES query finds EN passage, k respected. (~1.5 h)
-- [ ] 3.7 Add a temporary retrieve-then-answer path to `POST /chat` in `backend/app/main.py` (retrieve top-k, put passages in the prompt, return sources) and the first `backend/app/prompts.py` with a version constant. This stands in for the agent loop until milestone 4 (see Q3). (~1.5 h)
-- [ ] 3.8 KMP model: add `sources` to `shared/domain/src/commonMain/.../model/Message.kt` and a new event for sources in `ChatEvent.kt`; parse it in `shared/data/.../network/ChatSseParser.kt` and `ChatCompletionsDto.kt` per the Q1 decision; map in `shared/data/.../repository/Mappers.kt`. (~1.5 h)
+- [ ] 3.7 Add a temporary retrieve-then-answer path to `POST /chat` in `backend/app/main.py` (retrieve top-k, put passages in the prompt, and send one `x_analyst` `sources` chunk before the text, as defined in DL-15) and the first `backend/app/prompts.py` with a version constant. Add a test to `backend/tests/test_chat_sse.py` that checks the `sources` chunk shape (`choices` is `[]`, `x_analyst.sources` is a list). This stands in for the agent loop until milestone 4 (see Q3). (~1.5 h)
+- [ ] 3.8 KMP model: add `sources` to `shared/domain/src/commonMain/.../model/Message.kt` and a `ChatEvent.Sources` variant in `ChatEvent.kt`; add the optional `x_analyst` field to `ChatCompletionChunkDto` in `shared/data/.../network/ChatCompletionsDto.kt` (`@SerialName("x_analyst")`, default `null`) and make `ChatSseParser.kt` emit `ChatEvent.Sources` for it (DL-15); map in `shared/data/.../repository/Mappers.kt`. Add a case to `ChatSseParserTest`: a `sources` line gives `Sources`, a normal text line still gives `Delta`. (~1.5 h)
 - [ ] 3.9 KMP persistence: add the column in `shared/data/.../local/Entities.kt`, write `MIGRATION_2_3`, export schema `3.json`, extend `shared/data/src/jvmTest/.../local/MigrationTest.kt`. Update `RoomChatRepository.kt` to persist sources. (~2 h)
 - [ ] 3.10 KMP UI: render source chips with links in `MessageBubble` in `shared/src/commonMain/.../presentation/chat/ChatScreen.kt`. Check that the link opens on Android and desktop (iOS unverified, Q10). (~1.5 h)
 
@@ -166,23 +208,24 @@ pytest tests/test_retrieval.py tests/test_ingest.py
 - If the embedding model needs query/passage prefixes (check the model card), forgetting them lowers recall silently.
 - Chunk size is a milestone-6 variable; do not hardcode it.
 - Room needs a real migration (schema v2 → v3) or existing installs crash; the old `MigrationTest` shows the pattern.
-- `ChatSseParser` currently drops everything except `delta.content`; sources need a transport decision first (Q1).
+- `ChatSseParser` currently drops everything except `delta.content`; the new chunks follow DL-15. A chunk with `choices: []` must not crash the parser (today it produces no event); the new test covers it.
 
 ---
 
 ## Milestone 4 — Agent loop
 
 **Goal:** the model chooses between data tools and `search_docs`, up to 5 steps; the app shows which tools ran.
-**Estimated hours:** 4–6
+In plain words: let the model decide whether it needs numbers, passages or both, run what it asks for, and show in the app which tools were used.
+**Estimated hours:** 4–6 (spec range) · Sum of task estimates below: 11.5 h (see Q17)
 
 ### Tasks
 - [ ] 4.1 Verify the spec's `run_agent` sketch before reusing it: it builds its own `OpenAI` client (must go through `LLMClient`), `GROQ_API_KEY` and `EVAL_MODEL` are undefined, `messages.append(msg)` appends an SDK object, `json.loads` and tool calls have no error handling. Write the list of fixes in the session log. (~1 h)
 - [ ] 4.2 Add `search_docs` schema and wrapper to `backend/app/tools.py`; add a `tool_calls` capable method to `LLMClient` in `backend/app/llm.py`. (~1.5 h)
-- [ ] 4.3 Write `backend/app/agent.py`: hand-written loop, `max_steps=5`, temperature 0, returns `{"answer", "tools_called", "sources"}`. Tool errors (unknown tool, bad JSON args, exceptions) go back to the model as tool results. (~2 h)
+- [ ] 4.3 Write `backend/app/agent.py`: hand-written loop, `max_steps=5`, temperature passed in as a parameter (Q16), returns `{"answer", "tools_called", "sources"}`. Tool errors (unknown tool, bad JSON args, exceptions) go back to the model as tool results. (~2 h)
 - [ ] 4.4 Write the agent system prompt in `backend/app/prompts.py` (versioned): when to use each tool, "never guess a number", answer in the question's language, country-name to ISO3 hints, no-data wording. (~1 h)
 - [ ] 4.5 Write `backend/tests/test_agent.py` with a scripted fake `LLMClient`: tool then answer, two tools, max-steps reached, bad arguments, unknown tool, tool exception. (~1.5 h)
-- [ ] 4.6 Wire the loop into `POST /chat` in `backend/app/main.py`, replacing the temporary path from 3.7; stream the final answer and send tool names and sources per the Q1 and Q9 decisions. (~1.5 h)
-- [ ] 4.7 KMP: add `toolsCalled` to `Message.kt`, `ChatEvent.kt`, `ChatSseParser.kt`, `Mappers.kt`, `Entities.kt`; write `MIGRATION_3_4` and test it in `MigrationTest.kt`. (~2 h)
+- [ ] 4.6 Wire the loop into `POST /chat` in `backend/app/main.py`, replacing the temporary path from 3.7; stream the final answer and send `x_analyst` `tool_call` chunks (`running` when a tool starts, `done` when it ends) and the `sources` chunk as defined in DL-15; when the chunks are sent relative to the text depends on Q9. Extend `backend/tests/test_chat_sse.py` with a `tool_call` chunk case. (~1.5 h)
+- [ ] 4.7 KMP: add `toolsCalled` to `Message.kt`, add `ChatEvent.ToolCall(name, status)` in `ChatEvent.kt`, extend `ChatCompletionsDto.kt` and `ChatSseParser.kt` for the `tool_call` chunk (DL-15), and update `Mappers.kt` and `Entities.kt`; write `MIGRATION_3_4` and test it in `MigrationTest.kt`. (~2 h)
 - [ ] 4.8 KMP UI: show the tools that ran in `MessageBubble` (`ChatScreen.kt`), e.g. a small row of chips. (~1 h)
 
 ### Acceptance criteria
@@ -214,12 +257,13 @@ uvicorn app.main:app --reload
 ## Milestone 5 — Evals v1, code checks
 
 **Goal:** a 30-case golden set with cache-derived expected values, pytest code checks, and CI that shows a pass rate and fails on a broken prompt.
-**Estimated hours:** 4–6
+In plain words: 30 fixed questions with known correct answers, automatic checks, and GitHub running them on every push, so a bad change turns the build red.
+**Estimated hours:** 4–6 (spec range) · Sum of task estimates below: 11 h (see Q17)
 
 ### Tasks
 - [ ] 5.1 Write the 30 case inputs (EN and ES) following the Golden set plan below, in a draft file `backend/evals/golden_inputs.jsonl` (inputs and types only, no numbers). (~1.5 h)
 - [ ] 5.2 Write `backend/evals/build_golden.py`: read each case, query the cache (offline mode) for the expected value(s), write `backend/evals/golden.jsonl`. Fail loudly if a value is missing from the cache. Never type values by hand. (~1.5 h)
-- [ ] 5.3 Write `backend/evals/test_fast.py` for number accuracy, tool choice, tool arguments, no-data honesty, language match. Start from the spec's sketch; note the sketch relies on undefined `EVAL_MODEL` and `run_agent` hitting the live LLM. (~2 h)
+- [ ] 5.3 Write `backend/evals/test_fast.py` for number accuracy, tool choice, tool arguments, no-data honesty, language match. Start from the spec's sketch; note the sketch relies on undefined `EVAL_MODEL` and `run_agent` hitting the live LLM. Decide Q16 (temperature for evals) first. (~2 h)
 - [ ] 5.4 Replace the spec's `numbers_in` parser with a tested one in `backend/evals/numbers.py`; add `backend/evals/test_numbers.py` (negative values, decimal comma, thousands separators, years, percent signs, Unicode minus). (~1.5 h)
 - [ ] 5.5 Add a language detector for the language-match check (choice in Q7) and a unit test with 6 EN and 6 ES strings. (~1 h)
 - [ ] 5.6 Add `.github/workflows/evals.yml`: Python 3.12, install, run `pytest evals/test_fast.py` in offline cache mode, print pass rate per metric in the job summary, fail below the Day-1 targets (Q6). Add the `GROQ_API_KEY` repository secret; decide how CI gets the cache (Q4). Give it a `paths:` filter (`backend/**`, `.github/workflows/evals.yml`) so Kotlin-only changes do not trigger it. (~2 h)
@@ -257,7 +301,8 @@ pytest evals/test_numbers.py
 ## Milestone 6 — Evals v2, quality
 
 **Goal:** retrieval recall@5, an LLM-as-judge for faithfulness, and a 2 chunk sizes × 2 models experiment with written results.
-**Estimated hours:** 4–6
+In plain words: measure how often the right passage is found and whether answers stick to their sources, then compare two chunk sizes and two models and write down what won.
+**Estimated hours:** 4–6 (spec range) · Sum of task estimates below: 8.5 h (see Q17)
 
 ### Tasks
 - [ ] 6.1 Write `backend/evals/test_quality.py` recall@5: share of `relevant_sections` found in the top 5 chunks for RAG and combined cases. Fill `relevant_sections` for the 8 RAG cases by reading the ingested sections (not guessing titles). (~2 h)
@@ -294,7 +339,8 @@ pytest evals/test_quality.py -q
 ## Milestone 7 — Observability and guardrails
 
 **Goal:** Langfuse tracing per request, input limits, an instruction-override test, and a cost estimate per answer.
-**Estimated hours:** 2–4
+In plain words: be able to look at any answer and see what happened inside, block oversized or abusive requests, and know what an answer costs.
+**Estimated hours:** 2–4 (spec range) · Sum of task estimates below: 6 h (see Q17)
 
 ### Tasks
 - [ ] 7.1 Create the Langfuse project (cloud or self-hosted, Q4) and add keys to `backend/.env.example`; add the dependency in `backend/pyproject.toml`. (~0.5 h)
@@ -322,7 +368,7 @@ pytest tests/test_guardrails.py
 ### Risks / gotchas
 - Do not send API keys or user data you would not want stored into traces.
 - Streaming responses may not include usage unless requested; check in D3.
-- Input limits must apply before the LLM call; unauthenticated public deploys are open to abuse (Q2).
+- Input limits must apply before the LLM call; unauthenticated public deploys are open to abuse (Q2a).
 - p50 latency and $/answer feed the README table; record from traces.
 
 ---
@@ -330,7 +376,8 @@ pytest tests/test_guardrails.py
 ## Milestone 8 — Polish and present
 
 **Goal:** a README with measured results, a demo, and an optional deployment; someone else can run it in under 10 minutes.
-**Estimated hours:** 3–5
+In plain words: write it up so a stranger understands it and can run it, with real numbers, a diagram and a demo.
+**Estimated hours:** 3–5 (spec range) · Sum of task estimates below: 10.5 h (see Q17)
 
 ### Tasks
 - [ ] 8.1 Write the root `README.md` in the spec's order: pitch, demo GIF (one EN, one ES question), architecture diagram, How it works, eval results table, design decisions, data sources and licenses, how to run, what next. The root `README.md` currently describes only the KMP app; fold that content into a "Client" section and link to `backend/README.md` for backend details. (~2 h)
@@ -398,7 +445,7 @@ Tracking: Spanish cases so far: __ / 10.
 Record the result next to each item (model IDs, counts, dates). Nothing below is assumed.
 
 - [ ] **D1 Python 3.12 present.** `py -3.12 --version` prints `Python 3.12.x`.
-- [ ] **D2 Groq current model list.** Call the OpenAI-compatible models endpoint with your key (`Invoke-RestMethod -Uri https://api.groq.com/openai/v1/models -Headers @{Authorization="Bearer $env:GROQ_API_KEY"}`) and read Groq's docs model page. Pick 2 models for milestone 6. Record IDs and context sizes. Do not hardcode them; put in `LLM_MODEL`.
+- [ ] **D2 Groq current model list.** Call the OpenAI-compatible models endpoint. The key lives in `api-keys.local.xml`; for this check, set it for the current terminal window only (`$env:GROQ_API_KEY = "..."`), never in a file or in a command you paste elsewhere (`Invoke-RestMethod -Uri https://api.groq.com/openai/v1/models -Headers @{Authorization="Bearer $env:GROQ_API_KEY"}`) and read Groq's docs model page. Pick 2 models for milestone 6. Record IDs and context sizes. Do not hardcode them; put in `LLM_MODEL`.
 - [ ] **D3 Tool calling and streaming on those models.** Send one chat completion with a single dummy tool and a prompt that needs it; check `tool_calls` in the response. Repeat with `stream: true`. Check whether a `usage` field is returned (needed in M7). Read the rate limits from Groq's console/docs and record them. Look up current per-token prices for the cost estimate.
 - [ ] **D4 Coverage of the 3 unchecked indicators.** For `SP.POP.TOTL`, `NY.GDP.PCAP.CD`, `NE.EXP.GNFS.ZS`, one request each:
   `python -c "import httpx; d=httpx.get('https://api.worldbank.org/v2/country/ARG;BOL;BRA;CHL;COL;ECU;MEX;PER/indicator/SP.POP.TOTL', params={'format':'json','date':'2021:2025','per_page':500}).json(); print(d[0]); print(len(d[1]), sum(r['value'] is None for r in d[1]))"`
@@ -413,22 +460,26 @@ Record the result next to each item (model IDs, counts, dates). Nothing below is
 
 ## Decision log
 
-| Date | Decision | Reason |
-| --- | --- | --- |
-| spec | Python 3.12 + FastAPI backend; KMP app only calls `/chat` over OpenAI-style SSE | Most AI engineer postings list Python; eval tooling lives there; matching Groq's stream keeps KMP changes small |
-| spec | No agent framework in v1: hand-written tool loop, max 5 steps | Explainable in interviews; easier to debug and eval; LangGraph port is optional in M8 |
-| spec | Groq via the OpenAI SDK behind an `LLMClient` interface; model names not hardcoded | Swapping model or provider is one change; evals compare models |
-| spec | World Bank country metadata replaces REST Countries | REST Countries v3.1 is deprecated; v5 needs an account and key |
-| spec | Debt indicator `GC.DOD.TOTL.GD.ZS` dropped | Too sparse (Chile none, Peru stops at 2021) |
-| spec | One indicator per World Bank request | Multi-indicator requests failed in testing |
-| spec | Evals run against the SQLite cache, not the live API; CI runs only fast code checks | Reproducible results when the World Bank updates data |
-| spec | 8 countries: ARG, BOL, BRA, CHL, COL, ECU, MEX, PER; Venezuela excluded (kept at most as a no-data case) | Venezuela data missing |
-| spec | RAG: Wikipedia EN + ES, multilingual embeddings, Chroma | Spanish questions must find English passages and vice versa |
-| 2026-10-02 | The existing KMP app stays at the repo root (`shared/`, `androidApp/`, `iosApp/`, `desktopApp/`); `backend/` is added at the root; no `app-kmp/` folder | Moving a Gradle project would break builds and CI; the spec's tree is only a sketch |
-| 2026-10-02 | KMP tasks name real files under `shared/data` (network, repository, local), `shared/domain` (model) and `shared/src/commonMain` (di, presentation) | Real layout found in the repo |
-| 2026-10-02 | Keep one repo: `backend/` is a sibling of the KMP modules, not a separate project; CI workflows get `paths:` filters; `backend/README.md` holds backend setup and the root README gives the system overview | Portfolio reviewers see the whole system in one place; the evals and the app share the SSE contract; one repo is cheaper to maintain at 4–8 h/week; a split stays cheap later because `backend/` is self-contained |
-| 2026-10-02 | Rename the GitHub repo (spec's suggestion: `latam-economy-analyst`, name to confirm) | The current name describes only the chat client |
-| 2026-10-02 | This `PLAN.md` is at the repo root; `docs/PLAN_LLM.md` is the finished KMP app plan and is historical | The earlier plan was renamed and moved under `docs/` |
+Every technical decision gets a row with an ID (DL-n). Tasks refer to the ID when they depend on a decision. When an open question is answered, add a row here and replace the question with a pointer.
+
+| ID | Date | Decision | Reason |
+| --- | --- | --- | --- |
+| DL-1 | spec | Python 3.12 + FastAPI backend; KMP app only calls `/chat` over OpenAI-style SSE | Most AI engineer postings list Python; eval tooling lives there; matching Groq's stream keeps KMP changes small |
+| DL-2 | spec | No agent framework in v1: hand-written tool loop, max 5 steps | Explainable in interviews; easier to debug and eval; LangGraph port is optional in M8 |
+| DL-3 | spec | Groq via the OpenAI SDK behind an `LLMClient` interface; model names not hardcoded | Swapping model or provider is one change; evals compare models |
+| DL-4 | spec | World Bank country metadata replaces REST Countries | REST Countries v3.1 is deprecated; v5 needs an account and key |
+| DL-5 | spec | Debt indicator `GC.DOD.TOTL.GD.ZS` dropped | Too sparse (Chile none, Peru stops at 2021) |
+| DL-6 | spec | One indicator per World Bank request | Multi-indicator requests failed in testing |
+| DL-7 | spec | Evals run against the SQLite cache, not the live API; CI runs only fast code checks | Reproducible results when the World Bank updates data |
+| DL-8 | spec | 8 countries: ARG, BOL, BRA, CHL, COL, ECU, MEX, PER; Venezuela excluded (kept at most as a no-data case) | Venezuela data missing |
+| DL-9 | spec | RAG: Wikipedia EN + ES, multilingual embeddings, Chroma | Spanish questions must find English passages and vice versa |
+| DL-10 | 2026-10-02 | The existing KMP app stays at the repo root (`shared/`, `androidApp/`, `iosApp/`, `desktopApp/`); `backend/` is added at the root; no `app-kmp/` folder | Moving a Gradle project would break builds and CI; the spec's tree is only a sketch |
+| DL-11 | 2026-10-02 | KMP tasks name real files under `shared/data` (network, repository, local), `shared/domain` (model) and `shared/src/commonMain` (di, presentation) | Real layout found in the repo |
+| DL-12 | 2026-10-02 | Keep one repo: `backend/` is a sibling of the KMP modules, not a separate project; CI workflows get `paths:` filters; `backend/README.md` holds backend setup and the root README gives the system overview | Portfolio reviewers see the whole system in one place; the evals and the app share the SSE contract; one repo is cheaper to maintain at 4–8 h/week; a split stays cheap later because `backend/` is self-contained |
+| DL-13 | 2026-10-02 | The KMP app is no longer a generic multi-provider client: it connects only to the LatAm backend. Provider, model, API key and temperature settings are removed from the app; the backend owns them. The Groq key and the runtime temperature (0.7) are read by the backend from `api-keys.local.xml` (override: `GROQ_API_KEY`); only the backend reads that file | Product direction; keeps keys off the device and lets evals test exactly what ships. The earlier "check many providers" goal now lives in the backend's `LLMClient` interface |
+| DL-14 | 2026-10-02 | Rename the GitHub repo (spec's suggestion: `latam-economy-analyst`, name to confirm) | The current name describes only the chat client |
+| DL-15 | 2026-10-02 | **Sources and tool names reach the app as extra chunks in the same `/chat` stream.** The backend sends normal `data:` lines with `"choices": []` and one extra top-level field, `x_analyst`, holding exactly one of: `{"tool_call": {"name": "...", "status": "running" | "done"}}` or `{"sources": [{"title", "url", "country", "lang", "section"}]}`. Text still travels as `choices[0].delta.content`; the stream still ends with `data: [DONE]`. App side: one optional field on `ChatCompletionChunkDto`, two new `ChatEvent` variants (`ToolCall`, `Sources`), no new parser state. Not chosen: one chunk at the end only, named SSE `event:` lines, links inside the answer text, a separate endpoint | The app already ignores unknown JSON fields (`ignoreUnknownKeys = true`) and unknown line types, so the change is small and old clients keep working; separate chunks let the UI show tool chips while the model is still working; both sides can be tested with one line of input. The field name `x_analyst` and the exact fields are final unless a task finds a problem; if renamed, change backend and app together |
+| DL-16 | 2026-10-02 | This `PLAN.md` is at the repo root; `docs/PLAN_LLM.md` is the finished KMP app plan and is historical | The earlier plan was renamed and moved under `docs/` |
 
 ---
 
@@ -436,21 +487,25 @@ Record the result next to each item (model IDs, counts, dates). Nothing below is
 
 Not decided; each needs an answer before the task that depends on it.
 
-- **Q1 Transport for sources and tool names.** The spec limits the app to `/chat` in the OpenAI stream format, but sources (M3) and tools called (M4) must reach the app. The app's `ChatSseParser` reads only `choices[0].delta.content` and `ignoreUnknownKeys = true` is set, so extra JSON fields are ignored today. Options: an extra field on the final chunk, an extra field on a dedicated chunk before `[DONE]`, or SSE comment/event lines. Needed before 3.8.
-- **Q2 Auth and model selection.** The app currently sends the user's Groq key and a `model` from Settings (default `gpt-4o-mini`). With a backend: does the backend ignore the client's `model`, and does the app need any token? A public deploy with no auth is open to abuse. Affects 1.6, 1.7, 7.3.
+- **Q1** (transport for sources and tool names): resolved, see DL-15.
+- **Q2a How the app gets the backend URL, and whether it needs a token.** Decided: no provider/model/key settings in the app (Decision log). Open: how the URL is supplied per platform and build (emulator, real device, deployed), without a Settings field. Does a deployed backend need a token from the app? A public endpoint with no auth is open to abuse. If a token is needed, it should come from the build config, not user input. Affects 1.6, 7.3, 8.5.
+- **Q2b Backend config source.** Plan assumes the backend reads the Groq key from `api-keys.local.xml` with `GROQ_API_KEY` as override. Temperature 0.7 is also read from the XML (decided). Confirm the key part, or use `backend/.env` only. Also open: Python does not read a `.env` file by itself, so either set variables by hand in each PowerShell window or add a small loader library (not in the spec). The XML also holds an OpenAI entry; the backend uses only `provider="groq"`.
+- **Q2c Leftover generic code.** Docs: decided, README.md and docs/ROADMAP.md are updated in task 1.12. Still open: keep `ChatApiConfig` and `ChatCompletionsApi` generic (small, already tested) or simplify them to the one backend? Also: after `ConfiguredReplySource` and the no-key demo mode go away, a fresh clone with no backend running shows only an error. Keep a built-in fake reply when the backend is unreachable, or accept that?
 - **Q3 M3 answers before the agent loop.** M3's "Done when" requires cited answers and "no data" for Peru 2030, but the agent loop is M4. I assumed a temporary always-retrieve path (task 3.7). The "no data" for GDP 2030 is not obviously achievable without the data tools. Confirm the intended scope.
 - **Q4 Data in CI and heavy dependencies.** The spec keeps `cache.sqlite` and `chroma/` out of git, but CI evals need the cache (and RAG cases need Chroma and the embedding model). Options: commit a small cache snapshot, upload a CI artifact, or rebuild in CI. Also: Langfuse cloud vs self-hosted, and CI install time for sentence-transformers. Affects 5.6, 7.1, 8.5.
 - **Q5 One argument convention.** The spec's tool is `get_indicator(countries, indicator, years)`; the sketch is `(countries, indicator, start, end)` with friendly names (`inflation`); the golden examples use WB codes and `years: [2024]`. Pick one (and add a friendly name for `NE.EXP.GNFS.ZS`, absent from the sketch) before 2.3 and 5.2.
 - **Q6 CI gate style.** Per-case asserts (the spec's sketch) make one LLM flake fail CI; aggregate thresholds (the spec's targets) are steadier but less strict. Which one makes "a broken prompt fails CI" work without flaky red builds?
 - **Q7 Language detector.** The spec says "a simple language detector" without naming one.
 - **Q8 Judge and tooling.** Which model judges (same as the answer model or different)? Are promptfoo and Ragas/DeepEval in scope for v1? They are in the tech stack table but not in the milestone text; the plan uses plain pytest and a hand-written judge.
-- **Q9 Streaming with tools.** The sketch loop is non-streaming. Should `/chat` stream only the final answer, or stream each step? Affects 4.6 and the app's UX.
+- **Q9 Streaming with tools.** The sketch loop is non-streaming. Should `/chat` stream only the final answer, or stream each step? Affects 4.6 and the app's UX. The `tool_call` chunks from DL-15 already allow progress updates, so this question is only about the text.
 - **Q10 iOS.** `docs/PLAN_LLM.md` says iOS was never run on a device (no Mac). Is there access to a Mac for milestones 1, 3 and 4? Otherwise iOS changes are compile-only and the Definition of done should say so. Info.plist has no transport-security setting today.
 - **Q11 Names and docs.** The spec is not at `docs/project-spec.md`: rename it with `git mv`? The repo rename is decided (task 1.11); only the final name needs confirming (spec suggests `latam-economy-analyst`, remote is now `urlop/LLMChatKMP`). Renaming a GitHub repo keeps redirects, but badge URLs in `README.md` should still be updated.
 - **Q12 Branch.** Current branch is `master`; `.github/workflows/ci.yml` and `ios.yml` trigger on pushes to `main` (pull requests still trigger). Should the workflows or the branch change? `evals.yml` needs the same answer.
 - **Q13 Cache freshness.** No TTL or refresh policy is given; the plan caches forever. Is that acceptable, and when does the cache get refreshed for the README results?
 - **Q14 Tool scope.** Should the data tools accept any World Bank country code or only the 8? This changes how "non-LatAm" and "Venezuela" no-data cases behave.
 - **Q15 Groq limits vs eval volume.** Free-tier rate limits are unknown (D3). Full runs (30 cases, 3 judged runs, 2 models, 2 chunk sizes) may not fit; may need caching of LLM outputs or smaller runs.
+- **Q16 Temperature 0.7 at runtime vs 0 in evals.** The spec says to run evals at temperature 0 and the agent sketch hardcodes 0, but the product will run at 0.7. Evals at 0 do not measure exactly what ships (the spec says "what you test is what ships"), and tool-argument accuracy may be lower at 0.7. Options: evals at 0 for reproducibility plus one extra run at 0.7 reported separately, or ship at 0 for the tool steps and use 0.7 only for the final answer. Needs a decision before task 5.3.
+- **Q17 Hour estimates.** The spec's milestone ranges add up to 29–45 h. The task estimates in this plan add up to about 85 h (13.5, 9, 15, 11.5, 11, 8.5, 6, 10.5). Either my task estimates are too high, the spec's ranges are optimistic, or the tasks should be trimmed. At 4–8 h/week, 85 h is 11–21 weeks, not 5–8. I did not change scope or spec ranges. Suggestion to discuss: measure the real time of the first milestone-1 tasks, then rescale; candidates to cut first are 1.12, 8.5 (deploy), 8.7 and part of M6.
 
 ---
 
